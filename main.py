@@ -128,7 +128,6 @@ def get_otp(req: OTPRequest):
                 msg = email.message_from_bytes(raw_email)
                 
                 from_header = msg.get('From', '')
-                to_header = msg.get('To', '')
                 subject = decode_mime_header(msg.get('Subject', ''))
                 
                 # ポケセンからのメールかチェック
@@ -139,12 +138,12 @@ def get_otp(req: OTPRequest):
                 if 'パスコード' not in subject:
                     continue
                 
-                # targetEmailが指定されていれば、Toヘッダーでフィルタ
-                if req.targetEmail:
-                    if req.targetEmail.lower() not in to_header.lower():
-                        debug_info.append(f"To不一致: {to_header[:50]}")
-                        continue
-                    debug_info.append(f"To一致: {to_header[:50]}")
+                # デバッグ用：全ヘッダー出力
+                if req.debug:
+                    debug_info.append("=== OTPメールのヘッダー全部 ===")
+                    for key, value in msg.items():
+                        debug_info.append(f"{key}: {value}")
+                    debug_info.append("=== ヘッダー終わり ===")
                 
                 msg_date = get_message_date(msg)
                 
@@ -166,14 +165,16 @@ def get_otp(req: OTPRequest):
                 
                 otp = extract_otp_from_body(body)
                 if otp:
-                    debug_info.append(f"OTP found: {otp}")
+                    debug_info.append(f"OTP: {otp}")
                     if latest_date is None or (msg_date and msg_date > latest_date):
                         latest_otp = otp
                         latest_date = msg_date
                         latest_subject = subject
                         latest_mail_id = mail_id
+                        # 1件見つけたらループ終了
+                        break
             except Exception as e:
-                debug_info.append(f"メール処理エラー: {str(e)}")
+                debug_info.append(f"エラー: {str(e)}")
                 continue
         
         if latest_otp:
