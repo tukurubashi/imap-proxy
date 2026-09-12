@@ -20,6 +20,7 @@ class OTPRequest(BaseModel):
     deleteAfter: bool = False
     debug: bool = False
     sinceTime: str = ""
+    showHeaders: bool = False
     
     class Config:
         populate_by_name = True
@@ -144,7 +145,6 @@ def get_otp(req: OTPRequest):
                 msg = email.message_from_bytes(raw_email)
                 
                 from_header = msg.get('From', '')
-                to_header = msg.get('To', '')
                 subject = decode_mime_header(msg.get('Subject', ''))
                 
                 # ポケセンからのメールかチェック
@@ -155,12 +155,24 @@ def get_otp(req: OTPRequest):
                 if 'パスコード' not in subject:
                     continue
                 
-                # targetEmailチェック（Toヘッダー）
+                # showHeadersがtrueなら全ヘッダー出力して終了
+                if req.showHeaders:
+                    debug_info.append("=== 全ヘッダー ===")
+                    for key, value in msg.items():
+                        debug_info.append(f"{key}: {value}")
+                    return {"status": "debug", "message": "ヘッダー出力", "debug": debug_info}
+                
+                # targetEmailチェック（全ヘッダーから検索）
                 if req.targetEmail:
-                    if req.targetEmail.lower() not in to_header.lower():
-                        debug_info.append(f"To不一致: {to_header[:80]}")
+                    found = False
+                    raw_str = raw_email.decode('utf-8', errors='replace')
+                    if req.targetEmail.lower() in raw_str.lower():
+                        found = True
+                        debug_info.append(f"メール内で発見: {req.targetEmail}")
+                    
+                    if not found:
+                        debug_info.append(f"メール内に{req.targetEmail}なし")
                         continue
-                    debug_info.append(f"To一致: {to_header[:80]}")
                 
                 msg_date = get_message_date(msg)
                 
