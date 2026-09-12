@@ -96,9 +96,8 @@ def get_otp(req: OTPRequest):
         mail.login(req.user, req.pass_)
         mail.select("INBOX")
         
-               # FROM検索（ポケモンセンターのメールアドレス）
-        search_query = '(FROM "pokemoncenter-online.com")'
-        status, messages = mail.search(None, search_query)
+        # 全メール取得
+        status, messages = mail.search(None, 'ALL')
         
         if status != "OK":
             return {"status": "error", "message": "検索エラー: " + str(status), "phase": "search"}
@@ -106,20 +105,27 @@ def get_otp(req: OTPRequest):
         mail_ids = messages[0].split()
         
         if not mail_ids:
-            return {"status": "not_found", "message": "OTPメールが見つかりません"}
+            return {"status": "not_found", "message": "メールが見つかりません"}
         
         latest_otp = None
         latest_date = None
         latest_subject = None
         latest_mail_id = None
         
-        for mail_id in reversed(mail_ids[-10:]):
+        # 最新20件をチェック
+        for mail_id in reversed(mail_ids[-20:]):
             status, msg_data = mail.fetch(mail_id, "(RFC822)")
             if status != "OK":
                 continue
             
             raw_email = msg_data[0][1]
             msg = email.message_from_bytes(raw_email)
+            
+            # 送信者チェック
+            from_header = msg.get('From', '')
+            if 'pokemoncenter-online.com' not in from_header:
+                continue
+            
             msg_date = get_message_date(msg)
             subject = decode_mime_header(msg.get('Subject', ''))
             
