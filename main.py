@@ -147,8 +147,9 @@ def get_otp(req: OTPRequest):
                 from_header = msg.get('From', '')
                 subject = decode_mime_header(msg.get('Subject', ''))
                 
-                # ポケセンからのメールかチェック
-                if 'pokemoncenter-online.com' not in from_header.lower():
+                # ポケセンからのメールかチェック（iCloud転送も対応）
+                from_normalized = from_header.lower().replace('_', '-')
+                if 'pokemoncenter-online' not in from_normalized:
                     continue
                 
                 # パスコードのメールかチェック
@@ -162,7 +163,7 @@ def get_otp(req: OTPRequest):
                         debug_info.append(f"{key}: {value}")
                     return {"status": "debug", "message": "ヘッダー出力", "debug": debug_info}
                 
-                # targetEmailチェック（全ヘッダーから検索）
+                # targetEmailチェック（メール全体から検索）
                 if req.targetEmail:
                     found = False
                     raw_str = raw_email.decode('utf-8', errors='replace')
