@@ -18,6 +18,7 @@ class OTPRequest(BaseModel):
     security: str = "SSL/TLS"
     targetEmail: str = ""
     deleteAfter: bool = False
+    debug: bool = False
     
     class Config:
         populate_by_name = True
@@ -85,6 +86,7 @@ def root():
 @app.post("/api/otp")
 def get_otp(req: OTPRequest):
     mail = None
+    debug_info = []
     try:
         if req.security == "SSL/TLS":
             mail = imaplib.IMAP4_SSL(req.host, int(req.port))
@@ -96,23 +98,22 @@ def get_otp(req: OTPRequest):
         mail.login(req.user, req.pass_)
         mail.select("INBOX")
         
-        # 全メール取得
         status, messages = mail.search(None, 'ALL')
         
         if status != "OK":
             return {"status": "error", "message": "検索エラー: " + str(status), "phase": "search"}
         
         mail_ids = messages[0].split()
+        debug_info.append(f"総メール数: {len(mail_ids)}")
         
         if not mail_ids:
-            return {"status": "not_found", "message": "メールが見つかりません"}
+            return {"status": "not_found", "message": "メールが見つかりません", "debug": debug_info}
         
         latest_otp = None
         latest_date = None
         latest_subject = None
         latest_mail_id = None
         
-        # 最新20件をチェック
         for mail_id in reversed(mail_ids[-20:]):
             status, msg_data = mail.fetch(mail_id, "(RFC822)")
             if status != "OK":
@@ -121,17 +122,18 @@ def get_otp(req: OTPRequest):
             raw_email = msg_data[0][1]
             msg = email.message_from_bytes(raw_email)
             
-            # 送信者チェック
             from_header = msg.get('From', '')
-            if 'pokemoncenter-online.com' not in from_header:
+            subject = decode_mime_header(msg.get('Subject', ''))
+            
+            debug_info.append(f"From: {from_header[:50]}, Subject: {subject[:30]}")
+            
+            if 'pokemoncenter-online.com' not in from_header.lower():
+                continue
+            
+            if 'パスコード' not in subject:
                 continue
             
             msg_date = get_message_date(msg)
-            subject = decode_mime_header(msg.get('Subject', ''))
-            
-            # 件名でフィルタ（パスコードのメールのみ）
-            if 'パスコード' not in subject:
-                continue
             
             body = ""
             if msg.is_multipart():
@@ -150,6 +152,7 @@ def get_otp(req: OTPRequest):
                     body = payload.decode(charset, errors='replace')
             
             otp = extract_otp_from_body(body)
+            debug_info.append(f"OTP found: {otp}")
             
             if otp:
                 if latest_date is None or (msg_date and msg_date > latest_date):
@@ -173,7 +176,7 @@ def get_otp(req: OTPRequest):
                     latest_date = latest_date.replace(tzinfo=timezone.utc)
                 age_minutes = round((now - latest_date).total_seconds() / 60, 1)
             
-            return {
+            result = {
                 "status": "success",
                 "code": latest_otp,
                 "ageMinutes": age_minutes,
@@ -181,14 +184,17 @@ def get_otp(req: OTPRequest):
                 "subject": latest_subject,
                 "deleted": req.deleteAfter
             }
+            if req.debug:
+                result["debug"] = debug_info
+            return result
         
-        return {"status": "not_found", "message": "OTPコードが見つかりません"}
+        return {"status": "not_found", "message": "OTPコードが見つかりません", "debug": debug_info}
     
     except imaplib.IMAP4.error as e:
-        return {"status": "error", "message": f"IMAP エラー: {str(e)}", "phase": "imap"}
+        return {"status": "error", "message": f"IMAP エラー: {str(e)}", "phase": "imap", "debug": debug_info}
     except Exception as e:
         traceback.print_exc()
-        return {"status": "error", "message": str(e), "phase": "unknown"}
+        return {"status": "error", "message": str(e), "phase": "unknown", "debug": debug_info}
     finally:
         if mail:
             try:
