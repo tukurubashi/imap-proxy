@@ -114,7 +114,7 @@ def get_otp(req: OTPRequest):
         latest_subject = None
         latest_mail_id = None
         
-        for mail_id in reversed(mail_ids[-20:]):
+        for mail_id in reversed(mail_ids[-100:]):
             try:
                 status, msg_data = mail.fetch(mail_id, "(RFC822)")
                 if status != "OK" or not msg_data or not msg_data[0]:
