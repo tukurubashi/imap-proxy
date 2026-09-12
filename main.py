@@ -96,8 +96,8 @@ def get_otp(req: OTPRequest):
         mail.login(req.user, req.pass_)
         mail.select("INBOX")
         
-        # FROM検索（ポケモンセンターのメールアドレス）
-        search_query = '(FROM "pokemon")'
+               # FROM検索（ポケモンセンターのメールアドレス）
+        search_query = '(FROM "pokemoncenter-online.com")'
         status, messages = mail.search(None, search_query)
         
         if status != "OK":
