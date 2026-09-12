@@ -19,7 +19,7 @@ class OTPRequest(BaseModel):
     targetEmail: str = ""
     deleteAfter: bool = False
     debug: bool = False
-    sinceTime: str = ""  # ISO形式の時刻。この時刻以降のメールだけ取得
+    sinceTime: str = ""
     
     class Config:
         populate_by_name = True
@@ -120,8 +120,8 @@ def get_otp(req: OTPRequest):
         since_dt = parse_since_time(req.sinceTime)
         
         debug_info.append(f"総メール数: {len(mail_ids)}")
+        debug_info.append(f"targetEmail: {req.targetEmail}")
         debug_info.append(f"sinceTime: {req.sinceTime}")
-        debug_info.append(f"since_dt: {since_dt}")
         
         if not mail_ids:
             return {"status": "not_found", "message": "メールが見つかりません", "debug": debug_info}
@@ -144,6 +144,7 @@ def get_otp(req: OTPRequest):
                 msg = email.message_from_bytes(raw_email)
                 
                 from_header = msg.get('From', '')
+                to_header = msg.get('To', '')
                 subject = decode_mime_header(msg.get('Subject', ''))
                 
                 # ポケセンからのメールかチェック
@@ -154,6 +155,13 @@ def get_otp(req: OTPRequest):
                 if 'パスコード' not in subject:
                     continue
                 
+                # targetEmailチェック（Toヘッダー）
+                if req.targetEmail:
+                    if req.targetEmail.lower() not in to_header.lower():
+                        debug_info.append(f"To不一致: {to_header[:80]}")
+                        continue
+                    debug_info.append(f"To一致: {to_header[:80]}")
+                
                 msg_date = get_message_date(msg)
                 
                 # sinceTime以降のメールだけ
@@ -163,8 +171,6 @@ def get_otp(req: OTPRequest):
                     if msg_date < since_dt:
                         debug_info.append(f"古いのでスキップ: {msg_date}")
                         continue
-                
-                debug_info.append(f"対象メール: {msg_date}")
                 
                 body = ""
                 if msg.is_multipart():
@@ -184,7 +190,7 @@ def get_otp(req: OTPRequest):
                 
                 otp = extract_otp_from_body(body)
                 if otp:
-                    debug_info.append(f"OTP: {otp}")
+                    debug_info.append(f"OTP: {otp}, Date: {msg_date}")
                     if latest_date is None or (msg_date and msg_date > latest_date):
                         latest_otp = otp
                         latest_date = msg_date
