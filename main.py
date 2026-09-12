@@ -19,6 +19,7 @@ class OTPRequest(BaseModel):
     targetEmail: str = ""
     deleteAfter: bool = False
     debug: bool = False
+    sinceTime: str = ""  # ISO形式の時刻。この時刻以降のメールだけ取得
     
     class Config:
         populate_by_name = True
@@ -78,6 +79,18 @@ def get_message_date(msg) -> datetime | None:
         return None
 
 
+def parse_since_time(since_str: str) -> datetime | None:
+    if not since_str:
+        return None
+    try:
+        dt = datetime.fromisoformat(since_str.replace('Z', '+00:00'))
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    except:
+        return None
+
+
 @app.get("/")
 def root():
     return {"status": "ok", "service": "IMAP OTP Proxy"}
@@ -104,8 +117,11 @@ def get_otp(req: OTPRequest):
             return {"status": "error", "message": "検索エラー: " + str(status), "phase": "search"}
         
         mail_ids = messages[0].split()
+        since_dt = parse_since_time(req.sinceTime)
+        
         debug_info.append(f"総メール数: {len(mail_ids)}")
-        debug_info.append(f"targetEmail: {req.targetEmail}")
+        debug_info.append(f"sinceTime: {req.sinceTime}")
+        debug_info.append(f"since_dt: {since_dt}")
         
         if not mail_ids:
             return {"status": "not_found", "message": "メールが見つかりません", "debug": debug_info}
@@ -138,14 +154,17 @@ def get_otp(req: OTPRequest):
                 if 'パスコード' not in subject:
                     continue
                 
-                # デバッグ用：全ヘッダー出力
-                if req.debug:
-                    debug_info.append("=== OTPメールのヘッダー全部 ===")
-                    for key, value in msg.items():
-                        debug_info.append(f"{key}: {value}")
-                    debug_info.append("=== ヘッダー終わり ===")
-                
                 msg_date = get_message_date(msg)
+                
+                # sinceTime以降のメールだけ
+                if since_dt and msg_date:
+                    if msg_date.tzinfo is None:
+                        msg_date = msg_date.replace(tzinfo=timezone.utc)
+                    if msg_date < since_dt:
+                        debug_info.append(f"古いのでスキップ: {msg_date}")
+                        continue
+                
+                debug_info.append(f"対象メール: {msg_date}")
                 
                 body = ""
                 if msg.is_multipart():
@@ -171,8 +190,6 @@ def get_otp(req: OTPRequest):
                         latest_date = msg_date
                         latest_subject = subject
                         latest_mail_id = mail_id
-                        # 1件見つけたらループ終了
-                        break
             except Exception as e:
                 debug_info.append(f"エラー: {str(e)}")
                 continue
