@@ -96,7 +96,8 @@ def get_otp(req: OTPRequest):
         mail.login(req.user, req.pass_)
         mail.select("INBOX")
         
-        search_query = '(SUBJECT "ログイン用パスコードのお知らせ")'
+        # FROM検索（ポケモンセンターのメールアドレス）
+        search_query = '(FROM "pokemon")'
         status, messages = mail.search(None, search_query)
         
         if status != "OK":
@@ -121,6 +122,10 @@ def get_otp(req: OTPRequest):
             msg = email.message_from_bytes(raw_email)
             msg_date = get_message_date(msg)
             subject = decode_mime_header(msg.get('Subject', ''))
+            
+            # 件名でフィルタ（パスコードのメールのみ）
+            if 'パスコード' not in subject:
+                continue
             
             body = ""
             if msg.is_multipart():
