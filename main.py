@@ -1,5 +1,5 @@
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import imaplib
 import email
@@ -10,37 +10,43 @@ import traceback
 
 app = FastAPI()
 
-# CORS設定（どこからでもアクセス可能に）
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 class OTPRequest(BaseModel):
     host: str
     port: str = "993"
     user: str
-    pass_: str = None  # 'pass' は予約語なのでエイリアス使用
+    pass_: str = None
     security: str = "SSL/TLS"
     targetEmail: str = ""
     deleteAfter: bool = False
     
     class Config:
-        # JSONの 'pass' を 'pass_' にマッピング
         populate_by_name = True
         
     def __init__(self, **data):
-        # 'pass' キーを 'pass_' に変換
         if 'pass' in data:
             data['pass_'] = data.pop('pass')
         super().__init__(**data)
 
 
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return JSONResponse(
+            content={},
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
+
 def decode_mime_header(header_value):
-    """MIMEエンコードされたヘッダーをデコード"""
     if not header_value:
         return ""
     decoded_parts = decode_header(header_value)
@@ -54,8 +60,6 @@ def decode_mime_header(header_value):
 
 
 def extract_otp_from_body(body: str) -> str | None:
-    """メール本文から6桁のOTPを抽出"""
-    # 6桁の数字を探す
     match = re.search(r'\b(\d{6})\b', body)
     if match:
         return match.group(1)
@@ -63,12 +67,10 @@ def extract_otp_from_body(body: str) -> str | None:
 
 
 def get_message_date(msg) -> datetime | None:
-    """メールの日付を取得"""
     date_str = msg.get('Date')
     if not date_str:
         return None
     try:
-        # email.utils.parsedate_to_datetime を使用
         from email.utils import parsedate_to_datetime
         return parsedate_to_datetime(date_str)
     except:
@@ -84,7 +86,6 @@ def root():
 def get_otp(req: OTPRequest):
     mail = None
     try:
-        # IMAP接続
         if req.security == "SSL/TLS":
             mail = imaplib.IMAP4_SSL(req.host, int(req.port))
         else:
@@ -92,13 +93,9 @@ def get_otp(req: OTPRequest):
             if req.security == "STARTTLS":
                 mail.starttls()
         
-        # ログイン
         mail.login(req.user, req.pass_)
-        
-        # INBOXを選択
         mail.select("INBOX")
         
-        # ポケモンセンターからのOTPメールを検索
         search_query = '(SUBJECT "ログイン用パスコードのお知らせ")'
         status, messages = mail.search(None, search_query)
         
@@ -110,27 +107,21 @@ def get_otp(req: OTPRequest):
         if not mail_ids:
             return {"status": "not_found", "message": "OTPメールが見つかりません"}
         
-        # 最新のメールから確認
         latest_otp = None
         latest_date = None
         latest_subject = None
         latest_mail_id = None
         
-        for mail_id in reversed(mail_ids[-10:]):  # 最新10件をチェック
+        for mail_id in reversed(mail_ids[-10:]):
             status, msg_data = mail.fetch(mail_id, "(RFC822)")
             if status != "OK":
                 continue
             
             raw_email = msg_data[0][1]
             msg = email.message_from_bytes(raw_email)
-            
-            # 日付を取得
             msg_date = get_message_date(msg)
-            
-            # 件名をデコード
             subject = decode_mime_header(msg.get('Subject', ''))
             
-            # 本文を取得
             body = ""
             if msg.is_multipart():
                 for part in msg.walk():
@@ -147,11 +138,9 @@ def get_otp(req: OTPRequest):
                     charset = msg.get_content_charset() or 'utf-8'
                     body = payload.decode(charset, errors='replace')
             
-            # OTPを抽出
             otp = extract_otp_from_body(body)
             
             if otp:
-                # 最新のものを保持
                 if latest_date is None or (msg_date and msg_date > latest_date):
                     latest_otp = otp
                     latest_date = msg_date
@@ -159,7 +148,6 @@ def get_otp(req: OTPRequest):
                     latest_mail_id = mail_id
         
         if latest_otp:
-            # 削除オプションが有効なら削除
             if req.deleteAfter and latest_mail_id:
                 try:
                     mail.store(latest_mail_id, '+FLAGS', '\\Deleted')
@@ -167,7 +155,6 @@ def get_otp(req: OTPRequest):
                 except Exception as e:
                     print(f"メール削除エラー: {e}")
             
-            # 何分前のメールか計算
             age_minutes = None
             if latest_date:
                 now = datetime.now(timezone.utc)
