@@ -144,15 +144,9 @@ def get_otp(req: OTPRequest):
                     
                 msg = email.message_from_bytes(raw_email)
                 
-                from_header = msg.get('From', '')
                 subject = decode_mime_header(msg.get('Subject', ''))
                 
-                # ポケセンからのメールかチェック（iCloud転送も対応）
-                from_normalized = from_header.lower().replace('_', '-')
-                if 'pokemoncenter-online' not in from_normalized:
-                    continue
-                
-                # パスコードのメールかチェック
+                # パスコードのメールかチェック（件名のみ）
                 if 'パスコード' not in subject:
                     continue
                 
@@ -172,7 +166,6 @@ def get_otp(req: OTPRequest):
                         debug_info.append(f"メール内で発見: {req.targetEmail}")
                     
                     if not found:
-                        debug_info.append(f"メール内に{req.targetEmail}なし")
                         continue
                 
                 msg_date = get_message_date(msg)
@@ -182,7 +175,6 @@ def get_otp(req: OTPRequest):
                     if msg_date.tzinfo is None:
                         msg_date = msg_date.replace(tzinfo=timezone.utc)
                     if msg_date < since_dt:
-                        debug_info.append(f"古いのでスキップ: {msg_date}")
                         continue
                 
                 body = ""
