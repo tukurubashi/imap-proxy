@@ -105,6 +105,7 @@ def get_otp(req: OTPRequest):
         
         mail_ids = messages[0].split()
         debug_info.append(f"総メール数: {len(mail_ids)}")
+        debug_info.append(f"targetEmail: {req.targetEmail}")
         
         if not mail_ids:
             return {"status": "not_found", "message": "メールが見つかりません", "debug": debug_info}
@@ -118,26 +119,32 @@ def get_otp(req: OTPRequest):
             try:
                 status, msg_data = mail.fetch(mail_id, "(RFC822)")
                 if status != "OK" or not msg_data or not msg_data[0]:
-                    debug_info.append(f"fetch失敗: {mail_id}")
                     continue
                 
                 raw_email = msg_data[0][1] if isinstance(msg_data[0], tuple) else None
                 if not raw_email:
-                    debug_info.append(f"raw_email取得失敗: {mail_id}")
                     continue
                     
                 msg = email.message_from_bytes(raw_email)
                 
                 from_header = msg.get('From', '')
+                to_header = msg.get('To', '')
                 subject = decode_mime_header(msg.get('Subject', ''))
                 
-                debug_info.append(f"From: {from_header[:50]}, Subject: {subject[:30]}")
-                
+                # ポケセンからのメールかチェック
                 if 'pokemoncenter-online.com' not in from_header.lower():
                     continue
                 
+                # パスコードのメールかチェック
                 if 'パスコード' not in subject:
                     continue
+                
+                # targetEmailが指定されていれば、Toヘッダーでフィルタ
+                if req.targetEmail:
+                    if req.targetEmail.lower() not in to_header.lower():
+                        debug_info.append(f"To不一致: {to_header[:50]}")
+                        continue
+                    debug_info.append(f"To一致: {to_header[:50]}")
                 
                 msg_date = get_message_date(msg)
                 
