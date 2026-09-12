@@ -115,51 +115,59 @@ def get_otp(req: OTPRequest):
         latest_mail_id = None
         
         for mail_id in reversed(mail_ids[-20:]):
-            status, msg_data = mail.fetch(mail_id, "(RFC822)")
-            if status != "OK":
+            try:
+                status, msg_data = mail.fetch(mail_id, "(RFC822)")
+                if status != "OK" or not msg_data or not msg_data[0]:
+                    debug_info.append(f"fetch失敗: {mail_id}")
+                    continue
+                
+                raw_email = msg_data[0][1] if isinstance(msg_data[0], tuple) else None
+                if not raw_email:
+                    debug_info.append(f"raw_email取得失敗: {mail_id}")
+                    continue
+                    
+                msg = email.message_from_bytes(raw_email)
+                
+                from_header = msg.get('From', '')
+                subject = decode_mime_header(msg.get('Subject', ''))
+                
+                debug_info.append(f"From: {from_header[:50]}, Subject: {subject[:30]}")
+                
+                if 'pokemoncenter-online.com' not in from_header.lower():
+                    continue
+                
+                if 'パスコード' not in subject:
+                    continue
+                
+                msg_date = get_message_date(msg)
+                
+                body = ""
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        content_type = part.get_content_type()
+                        if content_type == "text/plain":
+                            payload = part.get_payload(decode=True)
+                            if payload:
+                                charset = part.get_content_charset() or 'utf-8'
+                                body = payload.decode(charset, errors='replace')
+                                break
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        charset = msg.get_content_charset() or 'utf-8'
+                        body = payload.decode(charset, errors='replace')
+                
+                otp = extract_otp_from_body(body)
+                if otp:
+                    debug_info.append(f"OTP found: {otp}")
+                    if latest_date is None or (msg_date and msg_date > latest_date):
+                        latest_otp = otp
+                        latest_date = msg_date
+                        latest_subject = subject
+                        latest_mail_id = mail_id
+            except Exception as e:
+                debug_info.append(f"メール処理エラー: {str(e)}")
                 continue
-            
-            raw_email = msg_data[0][1]
-            msg = email.message_from_bytes(raw_email)
-            
-            from_header = msg.get('From', '')
-            subject = decode_mime_header(msg.get('Subject', ''))
-            
-            debug_info.append(f"From: {from_header[:50]}, Subject: {subject[:30]}")
-            
-            if 'pokemoncenter-online.com' not in from_header.lower():
-                continue
-            
-            if 'パスコード' not in subject:
-                continue
-            
-            msg_date = get_message_date(msg)
-            
-            body = ""
-            if msg.is_multipart():
-                for part in msg.walk():
-                    content_type = part.get_content_type()
-                    if content_type == "text/plain":
-                        payload = part.get_payload(decode=True)
-                        if payload:
-                            charset = part.get_content_charset() or 'utf-8'
-                            body = payload.decode(charset, errors='replace')
-                            break
-            else:
-                payload = msg.get_payload(decode=True)
-                if payload:
-                    charset = msg.get_content_charset() or 'utf-8'
-                    body = payload.decode(charset, errors='replace')
-            
-            otp = extract_otp_from_body(body)
-            debug_info.append(f"OTP found: {otp}")
-            
-            if otp:
-                if latest_date is None or (msg_date and msg_date > latest_date):
-                    latest_otp = otp
-                    latest_date = msg_date
-                    latest_subject = subject
-                    latest_mail_id = mail_id
         
         if latest_otp:
             if req.deleteAfter and latest_mail_id:
@@ -167,7 +175,7 @@ def get_otp(req: OTPRequest):
                     mail.store(latest_mail_id, '+FLAGS', '\\Deleted')
                     mail.expunge()
                 except Exception as e:
-                    print(f"メール削除エラー: {e}")
+                    debug_info.append(f"削除エラー: {e}")
             
             age_minutes = None
             if latest_date:
