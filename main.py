@@ -5,7 +5,7 @@ import imaplib
 import email
 from email.header import decode_header
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import traceback
 
 app = FastAPI()
@@ -112,28 +112,39 @@ def get_otp(req: OTPRequest):
         mail.login(req.user, req.pass_)
         mail.select("INBOX")
         
-        status, messages = mail.search(None, 'ALL')
+        # メールボックスの総数を取得
+        status, data = mail.status("INBOX", "(MESSAGES)")
+        total_messages = 0
+        if status == "OK" and data[0]:
+            match = re.search(r'MESSAGES (\d+)', data[0].decode())
+            if match:
+                total_messages = int(match.group(1))
         
-        if status != "OK":
-            return {"status": "error", "message": "検索エラー: " + str(status), "phase": "search"}
-        
-        mail_ids = messages[0].split()
-        since_dt = parse_since_time(req.sinceTime)
-        
-        debug_info.append(f"総メール数: {len(mail_ids)}")
+        debug_info.append(f"総メール数: {total_messages}")
         debug_info.append(f"targetEmail: {req.targetEmail}")
         debug_info.append(f"sinceTime: {req.sinceTime}")
         
-        if not mail_ids:
+        if total_messages == 0:
             return {"status": "not_found", "message": "メールが見つかりません", "debug": debug_info}
+        
+        # 最新100件のIDを計算（SEARCHを使わない）
+        start_id = max(1, total_messages - 99)
+        end_id = total_messages
+        id_range = f"{start_id}:{end_id}"
+        
+        debug_info.append(f"取得範囲: {id_range}")
+        
+        since_dt = parse_since_time(req.sinceTime)
         
         latest_otp = None
         latest_date = None
         latest_subject = None
         latest_mail_id = None
         
-        for mail_id in reversed(mail_ids[-100:]):
+        # 最新から順に処理
+        for mail_num in range(end_id, start_id - 1, -1):
             try:
+                mail_id = str(mail_num).encode()
                 status, msg_data = mail.fetch(mail_id, "(RFC822)")
                 if status != "OK" or not msg_data or not msg_data[0]:
                     continue
